@@ -4,6 +4,7 @@ import {
   findMappedNonFunction,
 } from "./lib/ida-feature-trace.mjs";
 import { requireMcpToolError } from "./lib/mcp-verifier-results.mjs";
+import { withVerifierResourceOwner } from "./lib/verifier-file-resources.mjs";
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -53,7 +54,7 @@ const [
   { toolContract },
   { evidenceSchema },
   { functionDossierSchema },
-  { readIdaConfiguration },
+  { readIdaConfiguration, idaProtocol },
   { createIdaMcpConnection },
   { idaAddressSchema },
 ] = await Promise.all([
@@ -64,9 +65,14 @@ const [
   importBuilt("ida/IdaMcpConnection.js"),
   importBuilt("ida/IdaProtocolValues.js"),
 ]);
-const registration = readIdaConfiguration(process.env.REA_IDA_MCP_CONFIG);
-if (!registration.ok) throw registration.error;
-const config = registration.value;
+const config = await withVerifierResourceOwner(async (resourceScope) => {
+  const registration = await readIdaConfiguration(
+    process.env.REA_IDA_MCP_CONFIG,
+    { resourceScope },
+  );
+  if (!registration.ok) throw registration.error;
+  return registration.value;
+});
 if (
   config.protocol === "native" &&
   (values["second-procedure"] === undefined ||
@@ -85,8 +91,7 @@ const environment = Object.fromEntries(
 const report = {
   passed: false,
   mode: config.mode,
-  protocol:
-    config.protocol ?? (config.mode === "attached" ? "legacy" : "modern"),
+  protocol: idaProtocol(config),
   checks: [],
   observations: [],
   unverified: [],
@@ -181,6 +186,7 @@ const mcp = async (cliDossier) => {
     opened = true;
     const analyzed = await call("analyze_function", {
       procedure: values.procedure,
+      detail: "complete",
     });
     const dossier = functionDossierSchema.parse(observe(analyzed));
     assert.deepEqual(dossier.procedure, cliDossier.procedure);
